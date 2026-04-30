@@ -1,0 +1,390 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- This URDF was automatically created by SolidWorks to URDF Exporter! Originally created by Stephen Brawner (brawner@gmail.com) 
+     Commit Version: 1.6.0-4-g7f85cfe  Build Version: 1.6.7995.38578
+     For more information, please see http://wiki.ros.org/sw_urdf_exporter -->
+<robot
+  name="bookarm_urdf">
+  <link
+    name="base_link">
+    <inertial>
+      <origin
+        xyz="-1.73472347597681E-18 0 0.062013586281338"
+        rpy="0 0 0" />
+      <mass
+        value="0.109788490621049" />
+      <inertia
+        ixx="0.000158279940907156"
+        ixy="1.12331127184701E-21"
+        ixz="4.79103010790714E-21"
+        iyy="0.000157454680973284"
+        iyz="-1.6940658945086E-21"
+        izz="1.7073910871453E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://bookarm_urdf/meshes/base_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://bookarm_urdf/meshes/base_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <link
+    name="link1">
+    <inertial>
+      <origin
+        xyz="-1.73472347597681E-18 0 0.062013586281338"
+        rpy="0 0 0" />
+      <mass
+        value="0.109788490621049" />
+      <inertia
+        ixx="0.000158279940907156"
+        ixy="1.13158307797254E-21"
+        ixz="4.60574165069526E-21"
+        iyy="0.000157454680973284"
+        iyz="-1.82641479251709E-21"
+        izz="1.7073910871453E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://bookarm_urdf/meshes/link1.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://bookarm_urdf/meshes/link1.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="joint1_base"
+    type="revolute">
+    <origin
+      xyz="0 0 0"
+      rpy="0 0 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="link1" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="0"
+      upper="0"
+      effort="0"
+      velocity="0" />
+  </joint>
+  <link
+    name="link2">
+    <inertial>
+      <origin
+        xyz="0.00269721600540463 -0.130135471711785 -2.73218947466347E-17"
+        rpy="0 0 0" />
+      <mass
+        value="0.103788429202572" />
+      <inertia
+        ixx="0.000660871982416137"
+        ixy="2.99411843372238E-05"
+        ixz="2.79520872593919E-20"
+        iyy="1.58790536849015E-05"
+        iyz="-8.18842631978493E-20"
+        izz="0.000674260113800176" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://bookarm_urdf/meshes/link2.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://bookarm_urdf/meshes/link2.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="joint2_shoulder"
+    type="revolute">
+    <origin
+      xyz="0 0 0.12306"
+      rpy="-1.5708 0 0" />
+    <parent
+      link="link1" />
+    <child
+      link="link2" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="0"
+      upper="0"
+      effort="0"
+      velocity="0" />
+  </joint>
+  <link
+    name="link3">
+    <inertial>
+      <origin
+        xyz="0.107995 5.55111512312578E-17 3.13984949151802E-16"
+        rpy="0 0 0" />
+      <mass
+        value="0.192459981242098" />
+      <inertia
+        ixx="3.00802717429061E-05"
+        ixy="2.87197108678411E-20"
+        ixz="-1.53204768228906E-18"
+        iyy="0.000796459608262644"
+        iyz="5.9292306307801E-21"
+        izz="0.000794809088394899" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://bookarm_urdf/meshes/link3.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://bookarm_urdf/meshes/link3.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="joint3_elbow"
+    type="revolute">
+    <origin
+      xyz="0.03 -0.23682 0"
+      rpy="0 0 0" />
+    <parent
+      link="link2" />
+    <child
+      link="link3" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="0"
+      upper="0"
+      effort="0"
+      velocity="0" />
+  </joint>
+  <link
+    name="link4">
+    <inertial>
+      <origin
+        xyz="0.0587684470913418 -0.0370078621275774 -3.63858249086135E-16"
+        rpy="0 0 0" />
+      <mass
+        value="0.0784629420437175" />
+      <inertia
+        ixx="4.65405711679836E-05"
+        ixy="5.6757545742447E-06"
+        ixz="1.62292836182904E-21"
+        iyy="4.85268765300473E-05"
+        iyz="-7.14684049245816E-21"
+        izz="8.81271993985392E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://bookarm_urdf/meshes/link4.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://bookarm_urdf/meshes/link4.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="joint4_wrist"
+    type="revolute">
+    <origin
+      xyz="0.21599 0 0"
+      rpy="0 0 0" />
+    <parent
+      link="link3" />
+    <child
+      link="link4" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="0"
+      upper="0"
+      effort="0"
+      velocity="0" />
+  </joint>
+  <link
+    name="link5">
+    <inertial>
+      <origin
+        xyz="-0.0560260423486564 -2.79028565940021E-05 -0.000736143589927435"
+        rpy="0 0 0" />
+      <mass
+        value="0.0398735837418763" />
+      <inertia
+        ixx="3.39266432204395E-06"
+        ixy="-1.87669450850484E-08"
+        ixz="-3.87732617095061E-07"
+        iyy="4.46727093019296E-05"
+        iyz="-2.82886409056906E-08"
+        izz="4.22431930219849E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://bookarm_urdf/meshes/link5.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://bookarm_urdf/meshes/link5.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="joint5_gripper"
+    type="fixed">
+    <origin
+      xyz="0.1 0 0"
+      rpy="1.5824 0.00034577 0.011878" />
+    <parent
+      link="link4" />
+    <child
+      link="link5" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+  <link
+    name="link6">
+    <inertial>
+      <origin
+        xyz="0.0237680315145962 -0.0154351401409365 -3.71230823859037E-16"
+        rpy="0 0 0" />
+      <mass
+        value="0.00758641589639154" />
+      <inertia
+        ixx="8.91619658324369E-07"
+        ixy="1.13593549739876E-06"
+        ixz="-7.66434536318665E-23"
+        iyy="1.90312179452863E-06"
+        iyz="3.30872245021211E-24"
+        izz="2.6126674713396E-06" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://bookarm_urdf/meshes/link6.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://bookarm_urdf/meshes/link6.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="joint_pole"
+    type="revolute">
+    <origin
+      xyz="0.104 -0.112 0"
+      rpy="0 0 0" />
+    <parent
+      link="link4" />
+    <child
+      link="link6" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="0"
+      upper="0"
+      effort="0"
+      velocity="0" />
+  </joint>
+</robot>
