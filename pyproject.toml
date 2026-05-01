@@ -9,11 +9,12 @@ description = "Python control package for the book arm robot."
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [
-    { name = "Beiyu" }
+    { name = "beiyu" }
 ]
 dependencies = [
-    "numpy>=1.26",
-    "pin>=2.7",
+    "numpy>=2.4.3",
+    "pin >= 4.0.0",
+    "pyserial>=3.5",
 ]
 
 [project.optional-dependencies]
