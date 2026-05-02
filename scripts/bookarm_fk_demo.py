@@ -30,7 +30,7 @@ def main() -> None:
     # Joint angles in radians, ordered as:
     # joint1_base, joint2_shoulder, joint3_elbow, joint4_wrist, joint_pole
     q = np.array([0.2, -0.3, 0.4, 0.1, 0.0], dtype=float)
-    fk = robot.forward_kinematics_dict(q)
+    fk = robot.fkine_dict(q)
 
     print("BookArm forward kinematics demo")
     print(f"URDF: {robot.urdf_path}")

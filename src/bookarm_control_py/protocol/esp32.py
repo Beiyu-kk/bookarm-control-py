@@ -9,8 +9,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 import json
+import math
 import time
-from typing import Any
+from typing import Any, Callable
+
+from bookarm_control_py.protocol.id_config import CommandId
 
 DEFAULT_USB_BAUDRATE = 921600
 
@@ -86,7 +89,7 @@ class JsonSerialTransport:
         if not self.is_open:
             self.open()
         assert self._serial is not None
-        payload = json.dumps(dict(command), separators=(",", ":")).encode("utf-8") + b"\n"
+        payload = json.dumps(self._normalize_command(command), separators=(",", ":")).encode("utf-8") + b"\n"
         self._serial.write(payload)
         self._serial.flush()
 
@@ -117,6 +120,8 @@ class JsonSerialTransport:
         *,
         response_timeout: float | None = None,
         expected_t: int | None = None,
+        response_filter: Callable[[dict[str, Any]], bool] | None = None,
+        response_description: str | None = None,
     ) -> dict[str, Any]:
         self.send(command)
         deadline = time.monotonic() + (self.timeout if response_timeout is None else response_timeout)
@@ -125,14 +130,109 @@ class JsonSerialTransport:
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                if expected_t is None:
-                    raise TransportError("no JSON response received")
-                raise TransportError(f"expected T={expected_t}, got {last_response}")
+                raise self._request_timeout_error(
+                    expected_t,
+                    response_filter,
+                    response_description,
+                    last_response,
+                )
 
-            response = self.read_json(timeout=remaining)
-            if expected_t is None or response.get("T") == expected_t:
-                return response
-            last_response = response
+            try:
+                response = self.read_json(timeout=remaining)
+            except TransportError as exc:
+                if last_response is None:
+                    raise
+                raise self._request_timeout_error(
+                    expected_t,
+                    response_filter,
+                    response_description,
+                    last_response,
+                ) from exc
+
+            if expected_t is not None and response.get("T") != expected_t:
+                last_response = response
+                continue
+            if response_filter is not None and not response_filter(response):
+                last_response = response
+                continue
+            return response
+
+    @staticmethod
+    def _normalize_command(command: Mapping[str, Any]) -> dict[str, Any]:
+        normalized = dict(command)
+        if normalized.get("T") == int(CommandId.JOINTS_NAMED_RAD):
+            for field_name in ("base", "shoulder", "elbow", "hand", "r"):
+                if field_name in normalized:
+                    normalized[field_name] = JsonSerialTransport._normalize_numeric(
+                        normalized[field_name],
+                        field_name,
+                    )
+            for field_name in ("spd", "acc"):
+                if field_name in normalized:
+                    normalized[field_name] = JsonSerialTransport._floor_int(
+                        normalized[field_name],
+                        field_name,
+                    )
+        if normalized.get("T") in {
+            int(CommandId.EXT_GRIPPER_OPEN),
+            int(CommandId.EXT_GRIPPER_CLOSE),
+            int(CommandId.EXT_GRIPPER_DEG),
+            int(CommandId.EXT_GRIPPER_HOLD_CLOSE),
+        }:
+            if "angle" in normalized:
+                normalized["angle"] = JsonSerialTransport._normalize_numeric(
+                    normalized["angle"],
+                    "angle",
+                )
+            for field_name in ("spd", "acc", "torque", "hold"):
+                if field_name in normalized:
+                    normalized[field_name] = JsonSerialTransport._floor_int(
+                        normalized[field_name],
+                        field_name,
+                    )
+        return normalized
+
+    @staticmethod
+    def _normalize_numeric(value: Any, field_name: str) -> int | float:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError) as exc:
+            raise TransportError(f"{field_name} must be numeric, got {value!r}") from exc
+        if not math.isfinite(numeric):
+            raise TransportError(f"{field_name} must be finite, got {value!r}")
+        if numeric.is_integer():
+            return int(numeric)
+        return numeric
+
+    @staticmethod
+    def _floor_int(value: Any, field_name: str) -> int:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError) as exc:
+            raise TransportError(f"{field_name} must be numeric, got {value!r}") from exc
+        if not math.isfinite(numeric):
+            raise TransportError(f"{field_name} must be finite, got {value!r}")
+        return math.floor(numeric)
+
+    @staticmethod
+    def _request_timeout_error(
+        expected_t: int | None,
+        response_filter: Callable[[dict[str, Any]], bool] | None,
+        response_description: str | None,
+        last_response: dict[str, Any] | None,
+    ) -> TransportError:
+        expected = []
+        if expected_t is not None:
+            expected.append(f"T={expected_t}")
+        if response_filter is not None:
+            expected.append(response_description or "a response accepted by response_filter")
+
+        if expected:
+            return TransportError(
+                f"no matching JSON response received; expected {', '.join(expected)}; "
+                f"last response: {last_response}"
+            )
+        return TransportError(f"no JSON response received; last response: {last_response}")
 
 
 __all__ = [

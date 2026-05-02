@@ -20,7 +20,7 @@ from bookarm_control_py import BookArm
 TARGET_POSITION_M = np.array([0.266179, 0.053958, 0.316738], dtype=float)
 
 # 逆解初始构型，单位是弧度。
-# 不需要手动调用限位检查；BookArm.inverse_kinematics 会在内部检查。
+# 不需要手动调用限位检查；BookArm.ikine 会在内部检查。
 INITIAL_Q_RAD = np.array([0.0, 0.0, 0.0, 0.0, 0.0], dtype=float)
 
 # 当前真实末端位姿使用 link5。
@@ -34,7 +34,7 @@ def format_array(values: np.ndarray) -> str:
 def main() -> None:
     robot = BookArm(end_effector_link=END_EFFECTOR_LINK)
 
-    result = robot.inverse_kinematics(
+    result = robot.ikine(
         target_position=TARGET_POSITION_M,
         q0=INITIAL_Q_RAD,
         max_iterations=200,
@@ -44,7 +44,7 @@ def main() -> None:
     if not result.success:
         raise RuntimeError(f"IK failed with error norm {result.error_norm:.8f}")
 
-    solved_pose = robot.forward_kinematics_dict(result.q)
+    solved_pose = robot.fkine_dict(result.q)
     position_error = np.linalg.norm(TARGET_POSITION_M - solved_pose["position"])
 
     print("BookArm inverse kinematics demo")

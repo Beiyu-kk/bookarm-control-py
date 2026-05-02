@@ -1,8 +1,8 @@
 """High-level BookArm model.
 
 This module owns high-level robot intent, Pinocchio-based kinematics, joint
-limits, and gripper intent. It does not create serial ports, build low-level
-ESP32 transports, or know firmware transport details.
+limits, and gripper intent. Low-level ESP32 JSON construction stays in the
+actuator layer.
 
 Hardware execution is delegated to actuator objects:
 
@@ -39,8 +39,8 @@ DEFAULT_URDF_PATH = (
     / "urdf"
     / "bookarm_urdf.urdf"
 )
-
-GripperAction = Literal["open", "close", "angle", "feedback", "torque"]
+DEFAULT_MOVE_SPEED = 25.0
+DEFAULT_MOVE_ACCELERATION = 5.0
 
 
 @dataclass(frozen=True)
@@ -54,30 +54,28 @@ class IKResult:
 
 
 @dataclass(frozen=True)
-class GripperCommand:
-    """High-level gripper intent, without ESP32 command ids."""
+class BestEffortIKResult:
+    """Best-effort pose IK result.
 
-    action: GripperAction
-    value: float | None = None
+    ``success`` indicates whether the requested tolerance was reached. Even when
+    it is false, ``q`` is the best configuration found during the search.
+    """
+
+    success: bool
+    q: np.ndarray
+    error_norm: float
+    iterations: int
+    position_error_norm: float
+    rotation_error_rad: float
 
 
-class Gripper:
-    """High-level gripper intent builder."""
+@dataclass(frozen=True)
+class ArmFeedback:
+    """Joint feedback reported by the arm firmware."""
 
-    def open(self) -> GripperCommand:
-        return GripperCommand(action="open")
-
-    def close(self) -> GripperCommand:
-        return GripperCommand(action="close")
-
-    def set_angle(self, angle_deg: float) -> GripperCommand:
-        return GripperCommand(action="angle", value=float(angle_deg))
-
-    def feedback(self) -> GripperCommand:
-        return GripperCommand(action="feedback")
-
-    def set_torque(self, torque: float) -> GripperCommand:
-        return GripperCommand(action="torque", value=float(torque))
+    raw: dict[str, Any]
+    q_rad: np.ndarray
+    torque: np.ndarray
 
 
 class BookArm:
@@ -85,8 +83,6 @@ class BookArm:
 
     Parameters
     ----------
-    urdf_path:
-        URDF path. Defaults to ``assets/bookarm_urdf/urdf/bookarm_urdf.urdf``.
     end_effector_link:
         End-effector link used by FK/IK. In this project, ``link5`` is the real
         end-effector pose.
@@ -95,23 +91,19 @@ class BookArm:
     gripper_actuator:
         Optional low-level gripper actuator. BookArm only calls its public
         methods.
-    gripper:
-        Optional high-level gripper intent builder.
     """
 
     def __init__(
         self,
-        urdf_path: str | Path | None = None,
         end_effector_link: str = "link5",
         arm_actuator: "ArmActuator | None" = None,
         gripper_actuator: "GripperActuator | None" = None,
-        gripper: Gripper | None = None,
     ) -> None:
-        self.urdf_path = Path(urdf_path) if urdf_path is not None else DEFAULT_URDF_PATH
+        self.urdf_path = DEFAULT_URDF_PATH
         if not self.urdf_path.exists():
             raise FileNotFoundError(f"URDF file does not exist: {self.urdf_path}")
 
-        self.model = self._build_model_from_urdf(self.urdf_path)
+        self.model = self._build_model_from_assets_urdf()
         self.data = self.model.createData()
         self.end_effector_link = end_effector_link
         self.end_effector_frame_id = self._get_frame_id(end_effector_link)
@@ -121,7 +113,6 @@ class BookArm:
             pin.neutral(self.model),
             context="Pinocchio neutral configuration",
         )
-        self.gripper = gripper if gripper is not None else Gripper()
         self.arm_actuator = arm_actuator
         self.gripper_actuator = gripper_actuator
 
@@ -133,22 +124,65 @@ class BookArm:
     def nv(self) -> int:
         return self.model.nv
 
-    def connect_actuators(
+    @property
+    def arm(self) -> "ArmActuator":
+        if self.arm_actuator is None:
+            raise RuntimeError("No arm actuator is connected.")
+        return self.arm_actuator
+
+    @property
+    def gripper(self) -> "GripperActuator":
+        if self.gripper_actuator is None:
+            raise RuntimeError("No gripper actuator is connected.")
+        return self.gripper_actuator
+
+    def connect_serial_arm(
         self,
         *,
-        arm_actuator: "ArmActuator | None" = None,
-        gripper_actuator: "GripperActuator | None" = None,
+        port: str,
     ) -> "BookArm":
-        """Connect actuator interfaces created outside this high-level model."""
+        """Connect the arm actuator through its serial interface."""
 
-        if arm_actuator is not None:
-            self.arm_actuator = arm_actuator
-        if gripper_actuator is not None:
-            self.gripper_actuator = gripper_actuator
+        from bookarm_control_py.actuator.arm import ArmActuator
+
+        kwargs: dict[str, Any] = {
+            "joint_count": self.nq,
+            "port": port,
+        }
+
+        self.arm_actuator = ArmActuator(**kwargs).open()
         return self
 
-    def disconnect_actuators(self) -> None:
-        """Disconnect connected actuators if they expose a close method."""
+    def connect_serial_gripper(
+        self,
+        *,
+        port: str,
+    ) -> "BookArm":
+        """Connect the gripper actuator through its serial interface."""
+
+        from bookarm_control_py.actuator.gripper import GripperActuator
+
+        self.gripper_actuator = GripperActuator(port=port).open()
+        return self
+
+    def connect_serial(
+        self,
+        *,
+        port: str,
+    ) -> "BookArm":
+        """Connect arm and gripper through one shared serial transport."""
+
+        from bookarm_control_py.actuator.arm import ArmActuator
+        from bookarm_control_py.actuator.gripper import GripperActuator
+        from bookarm_control_py.protocol.esp32 import JsonSerialTransport
+
+        transport = JsonSerialTransport(port=port).open()
+        self.arm_actuator = ArmActuator(joint_count=self.nq, transport=transport)
+        self.gripper_actuator = GripperActuator(transport=transport)
+        return self
+
+    def close(self) -> None:
+        """Close connected hardware interfaces."""
 
         closed: set[int] = set()
         for actuator in (self.arm_actuator, self.gripper_actuator):
@@ -188,7 +222,7 @@ class BookArm:
 
         return q_array
 
-    def forward_kinematics(
+    def fkine(
         self,
         q: Iterable[float],
         end_effector_link: str | None = None,
@@ -202,14 +236,14 @@ class BookArm:
         pin.updateFramePlacements(self.model, self.data)
         return self.data.oMf[frame_id].copy()
 
-    def forward_kinematics_dict(
+    def fkine_dict(
         self,
         q: Iterable[float],
         end_effector_link: str | None = None,
     ) -> dict[str, np.ndarray]:
         """Return FK as position, rotation matrix, and homogeneous transform."""
 
-        pose = self.forward_kinematics(q, end_effector_link=end_effector_link)
+        pose = self.fkine(q, end_effector_link=end_effector_link)
         transform = np.eye(4)
         transform[:3, :3] = pose.rotation
         transform[:3, 3] = pose.translation
@@ -220,7 +254,7 @@ class BookArm:
             "transform": transform,
         }
 
-    def inverse_kinematics(
+    def ikine(
         self,
         target_position: Iterable[float],
         target_rotation: np.ndarray | None = None,
@@ -239,7 +273,7 @@ class BookArm:
         frame_id = self._get_frame_id(end_effector_link or self.end_effector_link)
 
         if target_rotation is None:
-            return self._inverse_kinematics_position_only(
+            return self._ikine_position_only(
                 target_translation=target_translation,
                 q=q,
                 frame_id=frame_id,
@@ -253,7 +287,7 @@ class BookArm:
             np.asarray(target_rotation, dtype=float).reshape(3, 3),
             target_translation,
         )
-        return self._inverse_kinematics_pose(
+        return self._ikine_pose(
             target_pose=target_pose,
             q=q,
             frame_id=frame_id,
@@ -263,49 +297,180 @@ class BookArm:
             step_size=step_size,
         )
 
+    def ikine_best_effort(
+        self,
+        target_position: Iterable[float],
+        target_rotation: np.ndarray,
+        q0: Iterable[float] | None = None,
+        end_effector_link: str | None = None,
+        max_iterations: int = 500,
+        tolerance: float = 1e-4,
+        damping: float = 1e-6,
+        step_size: float = 0.4,
+        print_error: bool = True,
+    ) -> BestEffortIKResult:
+        """Solve pose IK and return the closest configuration if exact IK fails.
+
+        The initial configuration is evaluated first. Each accepted update is
+        then evaluated, so the final update is never skipped when the iteration
+        budget is exhausted.
+        """
+
+        if max_iterations < 0:
+            raise ValueError("max_iterations must be greater than or equal to 0")
+        if tolerance <= 0.0:
+            raise ValueError("tolerance must be greater than 0")
+        if damping <= 0.0:
+            raise ValueError("damping must be greater than 0")
+        if step_size <= 0.0:
+            raise ValueError("step_size must be greater than 0")
+
+        target_translation = np.asarray(target_position, dtype=float).reshape(3)
+        target_pose = pin.SE3(
+            np.asarray(target_rotation, dtype=float).reshape(3, 3),
+            target_translation,
+        )
+        q = self._as_configuration(q0) if q0 is not None else self.neutral_q.copy()
+        q = self.check_joint_angles(q, context="Best-effort IK initial configuration")
+        frame_id = self._get_frame_id(end_effector_link or self.end_effector_link)
+
+        best_result: BestEffortIKResult | None = None
+
+        for iteration in range(max_iterations + 1):
+            q = self._clip_configuration_to_limits(q)
+            pin.forwardKinematics(self.model, self.data, q)
+            pin.updateFramePlacements(self.model, self.data)
+
+            current_pose = self.data.oMf[frame_id]
+            frame_error = current_pose.actInv(target_pose)
+            error = pin.log(frame_error).vector
+            error_norm = float(np.linalg.norm(error))
+            position_error_norm = float(np.linalg.norm(target_translation - current_pose.translation))
+            rotation_error_rad = float(np.linalg.norm(pin.log3(current_pose.rotation.T @ target_pose.rotation)))
+
+            result = BestEffortIKResult(
+                success=error_norm < tolerance,
+                q=q.copy(),
+                error_norm=error_norm,
+                iterations=iteration,
+                position_error_norm=position_error_norm,
+                rotation_error_rad=rotation_error_rad,
+            )
+            if best_result is None or result.error_norm < best_result.error_norm:
+                best_result = result
+
+            if result.success:
+                if print_error:
+                    self._print_best_effort_ik_error(result)
+                return result
+
+            if iteration == max_iterations:
+                break
+
+            jacobian = pin.computeFrameJacobian(
+                self.model,
+                self.data,
+                q,
+                frame_id,
+                pin.ReferenceFrame.LOCAL,
+            )
+            jacobian = -pin.Jlog6(frame_error.inverse()) @ jacobian
+            velocity = -self._damped_least_squares(jacobian, error, damping)
+            next_q = self._clip_configuration_to_limits(
+                pin.integrate(self.model, q, step_size * velocity)
+            )
+            if np.linalg.norm(next_q - q) < 1e-12:
+                break
+            q = next_q
+
+        if best_result is None:  # pragma: no cover - guarded by max_iterations validation.
+            raise RuntimeError("Best-effort IK did not evaluate any configuration")
+        result = BestEffortIKResult(
+            success=False,
+            q=best_result.q,
+            error_norm=best_result.error_norm,
+            iterations=best_result.iterations,
+            position_error_norm=best_result.position_error_norm,
+            rotation_error_rad=best_result.rotation_error_rad,
+        )
+        if print_error:
+            self._print_best_effort_ik_error(result)
+        return result
+
+    def best_effort_ik_solver(
+        self,
+        *,
+        end_effector_link: str | None = None,
+        max_iterations: int = 500,
+        tolerance: float = 1e-4,
+        damping: float = 1e-6,
+        step_size: float = 0.4,
+        print_error: bool = True,
+    ) -> "BestEffortIKSolver":
+        """Create a reusable best-effort pose IK solver for this robot."""
+
+        return BestEffortIKSolver(
+            self,
+            end_effector_link=end_effector_link,
+            max_iterations=max_iterations,
+            tolerance=tolerance,
+            damping=damping,
+            step_size=step_size,
+            print_error=print_error,
+        )
+
     def move_joints_rad(
         self,
         joint_angles_rad: Iterable[float],
         *,
+        speed: float = DEFAULT_MOVE_SPEED,
+        acceleration: float = DEFAULT_MOVE_ACCELERATION,
         wait_response: bool = False,
         response_timeout: float | None = None,
     ) -> dict[str, Any] | None:
-        """Forward high-level joint-angle intent to the connected arm actuator."""
+        """Move joints using the named-joint arm actuator command."""
 
-        q = self.check_joint_angles(joint_angles_rad)
-        return self._require_arm_actuator().move_joints_rad(
+        q = self.check_joint_angles(joint_angles_rad, context="Named joint command")
+        return self.arm.move_joints_rad(
             q,
+            speed=speed,
+            acceleration=acceleration,
             wait_response=wait_response,
             response_timeout=response_timeout,
         )
 
-    def move_joints_deg(
+    def move_zero_pose(
         self,
-        joint_angles_deg: Iterable[float],
         *,
+        speed: float = DEFAULT_MOVE_SPEED,
+        acceleration: float = DEFAULT_MOVE_ACCELERATION,
         wait_response: bool = False,
         response_timeout: float | None = None,
     ) -> dict[str, Any] | None:
-        q_rad = np.deg2rad(np.asarray(list(joint_angles_deg), dtype=float))
-        q_rad = self.check_joint_angles(q_rad)
-        return self._require_arm_actuator().move_joints_deg(
-            np.rad2deg(q_rad),
+        """Move all arm joints to the zero configuration."""
+
+        return self.move_joints_rad(
+            np.zeros(self.nq),
+            speed=speed,
+            acceleration=acceleration,
             wait_response=wait_response,
             response_timeout=response_timeout,
         )
 
-    def move_to_position(
+    def move_to_pose(
         self,
         target_position: Iterable[float],
         *,
         target_rotation: np.ndarray | None = None,
         q0: Iterable[float] | None = None,
+        speed: float = DEFAULT_MOVE_SPEED,
+        acceleration: float = DEFAULT_MOVE_ACCELERATION,
         wait_response: bool = False,
         response_timeout: float | None = None,
     ) -> IKResult:
-        """Solve IK, then forward the solved joint angles to the arm actuator."""
+        """Solve IK for a target end-effector pose, then move the arm."""
 
-        result = self.inverse_kinematics(
+        result = self.ikine(
             target_position=target_position,
             target_rotation=target_rotation,
             q0=q0,
@@ -314,36 +479,80 @@ class BookArm:
             raise RuntimeError(f"IK failed with error norm {result.error_norm:.6f}")
 
         self.check_joint_angles(result.q)
-        self._require_arm_actuator().move_joints_rad(
+        self.arm.move_joints_rad(
             result.q,
+            speed=speed,
+            acceleration=acceleration,
             wait_response=wait_response,
             response_timeout=response_timeout,
         )
         return result
 
-    def read_feedback(
+    def read_raw_feedback(
         self,
         *,
         response_timeout: float | None = None,
         expected_t: int | None = None,
     ) -> dict[str, Any]:
-        return self._require_arm_actuator().read_feedback(
+        return self.arm.read_feedback(
             response_timeout=response_timeout,
             expected_t=expected_t,
         )
 
-    def send_gripper_command(
+    def enable_torque(
         self,
-        command: GripperCommand,
         *,
         wait_response: bool = False,
         response_timeout: float | None = None,
     ) -> dict[str, Any] | None:
-        return self._require_gripper_actuator().send_command(
-            command,
+        return self.arm.enable_torque(
             wait_response=wait_response,
             response_timeout=response_timeout,
         )
+
+    def disable_torque(
+        self,
+        *,
+        wait_response: bool = False,
+        response_timeout: float | None = None,
+    ) -> dict[str, Any] | None:
+        return self.arm.disable_torque(
+            wait_response=wait_response,
+            response_timeout=response_timeout,
+        )
+
+    def read_arm_feedback(
+        self,
+        *,
+        response_timeout: float | None = None,
+        input_unit: Literal["rad", "deg"] = "rad",
+        expected_t: int | None = None,
+    ) -> ArmFeedback:
+        """Read and parse arm joint angle and torque feedback."""
+
+        feedback = self.read_raw_feedback(
+            response_timeout=response_timeout,
+            expected_t=expected_t,
+        )
+        q, feedback_unit = self._extract_joint_angles(feedback)
+        torque = self._extract_joint_torques(feedback)
+        if (feedback_unit or input_unit) == "deg":
+            q = np.deg2rad(q)
+        q = self.check_joint_angles(q, context="Feedback joint angle")
+        return ArmFeedback(raw=feedback, q_rad=q, torque=torque)
+
+    def zero_pose_error(
+        self,
+        feedback: ArmFeedback,
+        *,
+        expected_zero_rad: Iterable[float] | None = None,
+    ) -> np.ndarray:
+        expected = (
+            np.zeros(self.nq)
+            if expected_zero_rad is None
+            else self.check_joint_angles(expected_zero_rad, context="Expected zero configuration")
+        )
+        return feedback.q_rad - expected
 
     def open_gripper(
         self,
@@ -351,8 +560,7 @@ class BookArm:
         wait_response: bool = False,
         response_timeout: float | None = None,
     ) -> dict[str, Any] | None:
-        return self.send_gripper_command(
-            self.gripper.open(),
+        return self.gripper.open_gripper(
             wait_response=wait_response,
             response_timeout=response_timeout,
         )
@@ -363,8 +571,7 @@ class BookArm:
         wait_response: bool = False,
         response_timeout: float | None = None,
     ) -> dict[str, Any] | None:
-        return self.send_gripper_command(
-            self.gripper.close(),
+        return self.gripper.close_gripper(
             wait_response=wait_response,
             response_timeout=response_timeout,
         )
@@ -376,13 +583,44 @@ class BookArm:
         wait_response: bool = False,
         response_timeout: float | None = None,
     ) -> dict[str, Any] | None:
-        return self.send_gripper_command(
-            self.gripper.set_angle(angle_deg),
+        return self.gripper.set_angle(
+            angle_deg,
             wait_response=wait_response,
             response_timeout=response_timeout,
         )
 
-    def _inverse_kinematics_position_only(
+    def set_gripper_torque(
+        self,
+        torque: float,
+        *,
+        wait_response: bool = False,
+        response_timeout: float | None = None,
+    ) -> dict[str, Any] | None:
+        return self.gripper.set_torque(
+            torque,
+            wait_response=wait_response,
+            response_timeout=response_timeout,
+        )
+
+    def hold_gripper_closed(
+        self,
+        *,
+        wait_response: bool = False,
+        response_timeout: float | None = None,
+    ) -> dict[str, Any] | None:
+        return self.gripper.hold_close(
+            wait_response=wait_response,
+            response_timeout=response_timeout,
+        )
+
+    def read_gripper_feedback(
+        self,
+        *,
+        response_timeout: float | None = None,
+    ) -> dict[str, Any]:
+        return self.gripper.read_feedback(response_timeout=response_timeout)
+
+    def _ikine_position_only(
         self,
         target_translation: np.ndarray,
         q: np.ndarray,
@@ -423,7 +661,7 @@ class BookArm:
 
         return IKResult(False, q, last_error_norm, max_iterations)
 
-    def _inverse_kinematics_pose(
+    def _ikine_pose(
         self,
         target_pose: pin.SE3,
         q: np.ndarray,
@@ -466,6 +704,17 @@ class BookArm:
 
         return IKResult(False, q, last_error_norm, max_iterations)
 
+    @staticmethod
+    def _print_best_effort_ik_error(result: BestEffortIKResult) -> None:
+        print(
+            "尽力逆解"
+            f"{'已达到容许误差' if result.success else '未完全收敛，返回最接近构型'}："
+            f"总误差={result.error_norm:.8f}，"
+            f"位置误差={result.position_error_norm:.8f} m，"
+            f"姿态误差={np.rad2deg(result.rotation_error_rad):.8f} deg，"
+            f"最优迭代={result.iterations}"
+        )
+
     def _get_frame_id(self, frame_name: str) -> int:
         if not self.model.existFrame(frame_name):
             available_frames = [frame.name for frame in self.model.frames]
@@ -488,15 +737,87 @@ class BookArm:
             raise ValueError(f"Expected {self.nq} joint values, got {q_array.shape[0]}")
         return q_array
 
-    def _require_arm_actuator(self) -> "ArmActuator":
-        if self.arm_actuator is None:
-            raise RuntimeError("No arm actuator is connected.")
-        return self.arm_actuator
+    def _clip_configuration_to_limits(self, q: Iterable[float]) -> np.ndarray:
+        q_array = self._as_configuration(q)
+        return np.clip(
+            q_array,
+            self.model.lowerPositionLimit,
+            self.model.upperPositionLimit,
+        )
 
-    def _require_gripper_actuator(self) -> "GripperActuator":
-        if self.gripper_actuator is None:
-            raise RuntimeError("No gripper actuator is connected.")
-        return self.gripper_actuator
+    def _extract_joint_angles(self, feedback: dict[str, Any]) -> tuple[np.ndarray, str | None]:
+        candidates: list[tuple[Any, str | None]] = [
+            (feedback.get("joints_rad"), "rad"),
+            (feedback.get("angles_rad"), "rad"),
+            (feedback.get("joints_deg"), "deg"),
+            (feedback.get("angles_deg"), "deg"),
+            (feedback.get("joints"), None),
+            (feedback.get("q"), None),
+        ]
+
+        data = feedback.get("data")
+        if isinstance(data, dict):
+            candidates.extend(
+                [
+                    (data.get("joints_rad"), "rad"),
+                    (data.get("angles_rad"), "rad"),
+                    (data.get("joints_deg"), "deg"),
+                    (data.get("angles_deg"), "deg"),
+                    (data.get("joints"), None),
+                    (data.get("q"), None),
+                ]
+            )
+        elif isinstance(data, list):
+            candidates.append((data, None))
+
+        for candidate, unit in candidates:
+            if candidate is None:
+                continue
+            try:
+                angles = np.asarray(candidate, dtype=float)
+            except (TypeError, ValueError):
+                continue
+            if angles.shape == (self.nq,):
+                return angles, unit
+
+        raise ValueError(
+            "Cannot find joint angle feedback. Expected a list field such as "
+            "joints_rad, joints_deg, joints, q, data.joints_rad, data.joints, or data.q. "
+            f"Raw feedback: {feedback}"
+        )
+
+    def _extract_joint_torques(self, feedback: dict[str, Any]) -> np.ndarray:
+        candidates: list[Any] = [
+            feedback.get("joints_torque"),
+            feedback.get("torques"),
+            feedback.get("tau"),
+        ]
+
+        data = feedback.get("data")
+        if isinstance(data, dict):
+            candidates.extend(
+                [
+                    data.get("joints_torque"),
+                    data.get("torques"),
+                    data.get("tau"),
+                ]
+            )
+
+        for candidate in candidates:
+            if candidate is None:
+                continue
+            try:
+                torques = np.asarray(candidate, dtype=float)
+            except (TypeError, ValueError):
+                continue
+            if torques.shape == (self.nq,):
+                return torques
+
+        raise ValueError(
+            "Cannot find joint torque feedback. Expected a list field such as "
+            "joints_torque, torques, tau, data.joints_torque, data.torques, or data.tau. "
+            f"Raw feedback: {feedback}"
+        )
 
     @staticmethod
     def _damped_least_squares(
@@ -509,18 +830,62 @@ class BookArm:
         return jacobian.T @ np.linalg.solve(jj_t + damping_matrix, error)
 
     @staticmethod
-    def _build_model_from_urdf(urdf_path: Path) -> pin.Model:
-        if not str(urdf_path).isascii():
-            return BookArm._build_model_from_ascii_copy(urdf_path)
-
-        try:
-            return pin.buildModelFromUrdf(str(urdf_path))
-        except ValueError:
-            return BookArm._build_model_from_ascii_copy(urdf_path)
-
-    @staticmethod
-    def _build_model_from_ascii_copy(urdf_path: Path) -> pin.Model:
+    def _build_model_from_assets_urdf() -> pin.Model:
         with tempfile.TemporaryDirectory(prefix="bookarm_urdf_") as temp_dir:
-            temp_urdf_path = Path(temp_dir) / "bookarm_urdf.urdf"
-            shutil.copy2(urdf_path, temp_urdf_path)
+            temp_urdf_path = Path(temp_dir) / DEFAULT_URDF_PATH.name
+            shutil.copy2(DEFAULT_URDF_PATH, temp_urdf_path)
             return pin.buildModelFromUrdf(str(temp_urdf_path))
+
+
+class BestEffortIKSolver:
+    """Reusable best-effort pose IK solver.
+
+    The solver always returns a configuration. If the target pose cannot be
+    reached within ``tolerance`` and ``max_iterations``, the returned result has
+    ``success=False`` and ``q`` contains the closest configuration found.
+    """
+
+    def __init__(
+        self,
+        robot: BookArm,
+        *,
+        end_effector_link: str | None = None,
+        max_iterations: int = 500,
+        tolerance: float = 1e-4,
+        damping: float = 1e-6,
+        step_size: float = 0.4,
+        print_error: bool = True,
+    ) -> None:
+        self.robot = robot
+        self.end_effector_link = end_effector_link
+        self.max_iterations = max_iterations
+        self.tolerance = tolerance
+        self.damping = damping
+        self.step_size = step_size
+        self.print_error = print_error
+
+    def solve(
+        self,
+        target_position: Iterable[float],
+        target_rotation: np.ndarray,
+        q0: Iterable[float] | None = None,
+        *,
+        max_iterations: int | None = None,
+        tolerance: float | None = None,
+        damping: float | None = None,
+        step_size: float | None = None,
+        print_error: bool | None = None,
+    ) -> BestEffortIKResult:
+        """Solve IK for a target position and rotation matrix."""
+
+        return self.robot.ikine_best_effort(
+            target_position=target_position,
+            target_rotation=target_rotation,
+            q0=q0,
+            end_effector_link=self.end_effector_link,
+            max_iterations=self.max_iterations if max_iterations is None else max_iterations,
+            tolerance=self.tolerance if tolerance is None else tolerance,
+            damping=self.damping if damping is None else damping,
+            step_size=self.step_size if step_size is None else step_size,
+            print_error=self.print_error if print_error is None else print_error,
+        )

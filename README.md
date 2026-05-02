@@ -2,95 +2,103 @@
 
 图书馆机械臂的 Python 控制项目。
 
-项目中 `BookArm` 负责高层运动学、关节限位检查和高层控制意图；`actuator` 负责把高层指令转换成 ESP32 可以接收的 JSON 指令，并通过串口发送到底层固件。
+`BookArm` 负责高层机器人逻辑，包括 URDF 加载、正逆运动学、关节限位检查、机械臂运动、夹爪控制和反馈解析。底层 `actuator` 模块负责把高层命令转换成 ESP32 可以接收的 JSON 指令，并通过串口发送。
 
-## 安装
+当前默认末端执行器 frame 是 `link5`。关节角在 `BookArm` 内部统一使用弧度。
 
-建议使用已经配置好的 `bookarm-beiyu` conda 环境：
+## 快速开始
 
 ```powershell
 conda activate bookarm-beiyu
 pip install -e .
 ```
 
-如果重新创建环境，需要安装 Pinocchio：
+连接机械臂并移动到零位：
 
-```powershell
-conda create -n bookarm-beiyu python=3.11
-conda activate bookarm-beiyu
-conda install pinocchio -c conda-forge -y
-pip install -e .
+```python
+from bookarm_control_py import BookArm
+
+robot = BookArm()
+robot.connect_serial_arm(port="COM8")
+
+try:
+    robot.move_zero_pose()
+finally:
+    robot.close()
 ```
+
+## 文档
+
+- [安装与环境](docs/0.installation.md)
+- [示例脚本](docs/1.examples.md)
+- [BookArm API](docs/2.api.md)
+- [ESP32 JSON 指令](docs/3.esp32_protocol.md)
 
 ## 常用示例
 
-### 正运动学示例
+```powershell
+python example/0.check_arm_connection.py --port COM8
+python example/0.check_arm_connection.py --port COM8 --skip-torque-test
+python example/0.check_arm_connection.py --port COM8 --torque-test-delay 5.0
+python example/1.zero_and_read.py --port COM8
+python example/2.move_arm_to_q.py --port COM8
+python example/3.check_fk_ik.py --port COM8
+python example/4.check_ikine_best_effort.py --port COM8
+python example/5.check_gripper.py --port COM8
+python example/6.blind_grasp.py --port COM8
+python scripts/goal_pose_grasp.py --port COM8
+```
+
+### best-effort IK 真机测试
+
+`example/4.check_ikine_best_effort.py` 用于连接真实机械臂测试 `BookArm.ikine_best_effort`：
+
+- 目标位姿在脚本 `main()` 中直接修改，`target_position` 单位为米，`target_rpy_deg` 单位为度。
+- 姿态由 `bookarm_control_py.math_utils.rpy_to_matrix` 从欧拉角转换为旋转矩阵。
+- 脚本连接机械臂后，会先移动到 `START_Q_DEG` 定义的起始构型。
+- 到达起始构型并读取反馈后，使用该反馈关节角作为 IK 初始值 `q0`。
+- `ikine_best_effort` 即使未达到容差，也会返回搜索过程中最接近目标的关节构型；脚本默认会移动到这个最近构型。
+- 运动后会读取真实反馈，并打印关节误差、位置误差和姿态误差。
 
 ```powershell
-conda run -n bookarm-beiyu python scripts/bookarm_fk_demo.py
+python example/4.check_ikine_best_effort.py --port COM8
 ```
-
-该脚本直接在代码中定义关节角，然后调用 `BookArm.forward_kinematics_dict()` 计算末端位姿。
-
-### 逆运动学示例
-
-```powershell
-conda run -n bookarm-beiyu python scripts/bookarm_ik_demo.py
-```
-
-该脚本直接在代码中定义目标末端位置和初始关节角，然后调用 `BookArm.inverse_kinematics()` 求解关节角。
-
-### 零位读取测试
-
-```powershell
-conda run -n bookarm-beiyu python example/1.zero_and_read.py --port COM8
-```
-
-该脚本用于真实硬件测试：从 ESP32 读取当前关节角，检查机械臂是否接近零位，并用读取到的关节角计算当前末端位姿。
-
-### 高层关节运动测试
-
-```powershell
-conda run -n bookarm-beiyu python example/2.check_arm_move.py --port COM8
-```
-
-该脚本用于测试高层关节角运动指令是否可以正常发送到真实机械臂。完整链路是：
-
-```text
-BookArm.move_joints_deg -> ArmActuator -> ESP32 JSON serial transport
-```
-
-脚本中默认使用一个确定合法的关节构型：
-
-```python
-DEFAULT_TARGET_DEG = np.array([0.0, 0.0, 0.0, 0.0, 0.0], dtype=float)
-```
-
-如果需要测试其他构型，可以在脚本中修改 `DEFAULT_TARGET_DEG`，或者运行时传入：
-
-```powershell
-conda run -n bookarm-beiyu python example/2.check_arm_move.py --port COM8 --target-deg "0,10,20,0,0"
-```
-
-`BookArm.move_joints_deg()` 会在发送前根据 URDF 关节限位进行检查。如果目标关节角非法，脚本会直接报错，不会发送到底层 ESP32。
 
 常用参数：
 
-- `--port COM8`：指定 ESP32 串口。
-- `--baud 921600`：指定串口波特率，默认 `921600`。
-- `--wait-response`：发送运动指令后等待 ESP32 返回一条 JSON 响应。
-- `--read-after`：发送运动指令后再次读取 ESP32 反馈角度，用于检查实际角度和目标角度的误差。
-- `--settle-time 1.0`：使用 `--read-after` 时，发送指令后等待机械臂运动稳定的时间。
-- `--dry-run`：只打印将要发送的 ESP32 JSON 指令，不打开串口，也不控制真实机械臂。
+```powershell
+python example/4.check_ikine_best_effort.py --port COM8 --speed 25 --acceleration 5 --arm-wait 5
+python example/4.check_ikine_best_effort.py --port COM8 --max-iterations 500 --tolerance 1e-4 --step-size 0.4
+```
 
-例如发送后读取反馈：
+### 固定目标位姿抓取
+
+`scripts/goal_pose_grasp.py` 用于移动到固定目标位姿并执行抓取：
+
+- 目标位姿在脚本 `main()` 中直接修改，`target_position` 直接给 xyz，`target_rpy_deg` 通过 `rpy_to_matrix` 转换为旋转矩阵。
+- 逆解使用 `BookArm.ikine_best_effort`。
+- 默认会移动到 best-effort 返回的最近构型，并继续执行抓取流程。
+- 抓取后会先等待 `--grasp-hold-wait` 秒，再返回起始构型。
+- 返回起始构型时速度单独由 `--return-speed` 控制，默认 `20.0`；其他机械臂运动速度默认仍为 `25.0`。
 
 ```powershell
-conda run -n bookarm-beiyu python example/2.check_arm_move.py --port COM8 --read-after
+python scripts/goal_pose_grasp.py --port COM8
+```
+
+常用参数：
+
+```powershell
+python scripts/goal_pose_grasp.py --port COM8 --speed 25 --return-speed 20
+python scripts/goal_pose_grasp.py --port COM8 --grasp-hold-wait 3 --arm-wait 5 --gripper-wait 1
+python scripts/goal_pose_grasp.py --port COM8 --no-close
 ```
 
 ## 注意事项
 
-- 真实硬件测试前，请确认机械臂周围没有障碍物。
-- 首次运动建议使用较小角度，确认电机方向和关节限位都正确。
-- 如果串口被占用，可以先关闭其他串口调试工具，或者重新插拔 ESP32。
+- 真实硬件运动前，确认机械臂周围没有障碍物。
+- 第一次测试建议使用较小角度和较低速度。
+- `BookArm` 会根据 URDF 检查关节角是否超限，超限会直接报错，不会自动裁剪。
+- `ikine_best_effort` 的 `success=False` 不代表没有返回解，而是误差未达到 `tolerance`；脚本仍可能移动到返回的最近构型，请根据打印的位置误差和姿态误差判断目标是否合适。
+- Windows 路径中包含中文时，Pinocchio 直接读取 URDF 可能失败。当前代码会保持 `DEFAULT_URDF_PATH` 指向 `assets` 下的 URDF，同时在内部复制到临时英文路径给 Pinocchio 加载。
+- 如果串口被占用，请关闭串口调试助手、其他 Python 进程或重新插拔 ESP32。
+- 如果机械臂和夹爪接在同一个 ESP32 串口上，优先使用 `robot.connect_serial(port="COM8")`，不要分别打开两次同一个 COM 口。

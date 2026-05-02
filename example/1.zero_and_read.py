@@ -1,20 +1,18 @@
-"""Check robot zero pose from real ESP32 feedback.
+"""将真实机械臂移动到零位，并通过 ESP32 反馈进行验证。
 
-Run from the project root:
+请在项目根目录运行：
 
-    conda run -n bookarm-beiyu python example/1.zero_and_read.py --port COM3
+    conda run -n bookarm-beiyu python example/1.zero_and_read.py --port COM8
 
-This script is for real hardware. It reads joint angles from ESP32 feedback,
-checks whether the arm is near the expected zero pose, and computes the end
-effector pose with BookArm forward kinematics.
+该脚本用于真实硬件。脚本会先从 ESP32 读取当前关节角度反馈，然后发送零位
+关节运动命令；等待机械臂稳定后再次读取反馈，检查机械臂是否接近期望零位，
+并用最终反馈关节角通过 BookArm 正运动学计算末端位姿。
 
-Expected ESP32 protocol:
-1. Host sends one newline-delimited JSON command, for example {"id": 105}.
-2. ESP32 returns one newline-delimited JSON object.
-3. The returned object contains joint angles in one of these common fields:
-   joints_rad, joints, q, angles_rad, data.joints_rad, data.joints, data.q.
+该脚本只调用 BookArm 的高层操作。BookArm 会继续把硬件通信委托给 actuator
+层和 protocol 层。
 
-Use --input-unit deg if ESP32 returns degrees instead of radians.
+如果 ESP32 返回 joints 或 q 这类无法从字段名判断单位的数据，并且单位是角度制，
+请使用 --input-unit deg。
 """
 
 from __future__ import annotations
@@ -22,92 +20,69 @@ from __future__ import annotations
 import argparse
 import json
 import math
-from typing import Any
+import time
 
 import numpy as np
 
-from bookarm_control_py import BookArm
-from bookarm_control_py.actuator import ArmActuator
-from bookarm_control_py.protocol.esp32 import DEFAULT_USB_BAUDRATE
+from bookarm_control_py import ArmFeedback, BookArm
 
 
 DEFAULT_ZERO_TOLERANCE_DEG = 3.0
+# 固件零位运动命令单位：speed 为 deg/s，acceleration 为 deg/s^2。
+DEFAULT_ZERO_SPEED = 25.0
+DEFAULT_ZERO_ACCELERATION = 5.0
+DEFAULT_SETTLE_TIME = 5.0
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Read real ESP32 joint feedback and check BookArm zero pose."
+        description="读取真实 ESP32 关节反馈，并检查 BookArm 零位构型。"
     )
-    parser.add_argument("--port", default="COM8", help="Serial port, for example COM3.")
-    parser.add_argument("--baud", type=int, default=DEFAULT_USB_BAUDRATE, help="Serial baudrate.")
-    parser.add_argument("--timeout", type=float, default=2.0, help="Serial timeout in seconds.")
-    parser.add_argument(
-        "--open-delay",
-        type=float,
-        default=3.0,
-        help="Delay after opening the serial port, in seconds.",
-    )
+    parser.add_argument("--port", default="COM8", help="串口号，例如 COM8。")
     parser.add_argument(
         "--input-unit",
         choices=["rad", "deg"],
         default="rad",
-        help="Unit used by ESP32 feedback joint angles.",
+        help="ESP32 反馈关节角使用的单位。",
     )
     parser.add_argument(
         "--expected-zero",
         default=None,
         help=(
-            "Expected zero joint angles, comma-separated. "
-            "Uses --input-unit. Default is all zeros."
+            "期望零位关节角，用逗号分隔。"
+            "单位由 --input-unit 指定，默认全部为 0。"
         ),
     )
     parser.add_argument(
         "--tolerance-deg",
         type=float,
         default=DEFAULT_ZERO_TOLERANCE_DEG,
-        help="Allowed zero error in degrees for each joint.",
+        help="每个关节允许的零位误差，单位度。",
+    )
+    parser.add_argument(
+        "--settle-time",
+        type=float,
+        default=DEFAULT_SETTLE_TIME,
+        help="发送零位运动命令后等待机械臂稳定的时间，单位秒。",
+    )
+    parser.add_argument(
+        "--speed",
+        type=float,
+        default=DEFAULT_ZERO_SPEED,
+        help="零位运动命令的速度，单位 deg/s。",
+    )
+    parser.add_argument(
+        "--acc",
+        type=float,
+        default=DEFAULT_ZERO_ACCELERATION,
+        help="零位运动命令的加速度，单位 deg/s^2。",
+    )
+    parser.add_argument(
+        "--show-raw",
+        action="store_true",
+        help="在解析结果前打印 ESP32 原始反馈 JSON。",
     )
     return parser.parse_args()
-
-
-def extract_joint_angles(feedback: dict[str, Any], joint_count: int) -> np.ndarray:
-    """Extract joint angle list from common ESP32 feedback shapes."""
-
-    candidates: list[Any] = [
-        feedback.get("joints_rad"),
-        feedback.get("angles_rad"),
-        feedback.get("joints"),
-        feedback.get("q"),
-    ]
-
-    data = feedback.get("data")
-    if isinstance(data, dict):
-        candidates.extend(
-            [
-                data.get("joints_rad"),
-                data.get("angles_rad"),
-                data.get("joints"),
-                data.get("q"),
-            ]
-        )
-    elif isinstance(data, list):
-        candidates.append(data)
-
-    for candidate in candidates:
-        if candidate is None:
-            continue
-        try:
-            angles = np.asarray(candidate, dtype=float)
-        except (TypeError, ValueError):
-            continue
-        if angles.shape == (joint_count,):
-            return angles
-
-    raise ValueError(
-        "Cannot find joint angle feedback. Expected a list field such as "
-        "joints_rad, joints, q, data.joints_rad, data.joints, or data.q. "
-        f"Raw feedback: {feedback}"
-    )
 
 
 def parse_expected_zero(value: str | None, joint_count: int, input_unit: str) -> np.ndarray:
@@ -116,7 +91,7 @@ def parse_expected_zero(value: str | None, joint_count: int, input_unit: str) ->
 
     angles = np.asarray([float(item.strip()) for item in value.split(",")], dtype=float)
     if angles.shape != (joint_count,):
-        raise ValueError(f"--expected-zero must contain {joint_count} values.")
+        raise ValueError(f"--expected-zero 必须包含 {joint_count} 个数值。")
 
     if input_unit == "deg":
         angles = np.deg2rad(angles)
@@ -127,62 +102,88 @@ def format_array(values: np.ndarray) -> str:
     return np.array2string(values, precision=6, suppress_small=True)
 
 
+def print_feedback(
+    title: str,
+    feedback: ArmFeedback,
+    *,
+    show_raw: bool,
+) -> None:
+    print(f"\n{title}:")
+    if show_raw:
+        print("  原始反馈:")
+        print(json.dumps(feedback.raw, ensure_ascii=True, indent=2))
+    print(f"  rad: {format_array(feedback.q_rad)}")
+    print(f"  deg: {format_array(np.rad2deg(feedback.q_rad))}")
+    print(f"  torque: {format_array(feedback.torque)}")
+
+
 def main() -> None:
     args = parse_args()
-    arm_actuator = ArmActuator(
-        port=args.port,
-        baudrate=args.baud,
-        timeout=args.timeout,
-        open_delay=args.open_delay,
-    ).open()
-    robot = BookArm(arm_actuator=arm_actuator)
+    robot = BookArm()
+    robot.connect_serial_arm(port=args.port)
     expected_zero_rad = parse_expected_zero(args.expected_zero, robot.nq, args.input_unit)
     tolerance_rad = math.radians(args.tolerance_deg)
 
-    print("BookArm zero and feedback check")
+    print("BookArm 零位运动与反馈检查")
     print(f"URDF: {robot.urdf_path}")
-    print(f"end effector link: {robot.end_effector_link}")
-    print(f"joint names: {robot.joint_names}")
-    print(f"feedback command: {arm_actuator.feedback()}")
+    print(f"末端执行器 link: {robot.end_effector_link}")
+    print(f"关节名称: {robot.joint_names}")
 
     try:
-        feedback = robot.read_feedback(response_timeout=args.timeout)
+        initial_feedback = robot.read_arm_feedback(
+            input_unit=args.input_unit,
+        )
+        print_feedback(
+            "零位运动前的当前关节反馈",
+            initial_feedback,
+            show_raw=args.show_raw,
+        )
+
+        print("\n向 ESP32 发送零位运动命令。")
+        robot.move_zero_pose(
+            speed=args.speed,
+            acceleration=args.acc,
+        )
+        print(f"等待 {args.settle_time:.3f} 秒，让机械臂完成运动并稳定。")
+        if args.settle_time > 0:
+            time.sleep(args.settle_time)
+
+        final_feedback = robot.read_arm_feedback(
+            input_unit=args.input_unit,
+        )
     finally:
-        robot.disconnect_actuators()
+        robot.close()
 
-    print("\nRaw ESP32 feedback:")
-    print(json.dumps(feedback, ensure_ascii=True, indent=2))
+    print_feedback(
+        "零位运动后的最终关节反馈",
+        final_feedback,
+        show_raw=args.show_raw,
+    )
 
-    measured_q = extract_joint_angles(feedback, robot.nq)
-    if args.input_unit == "deg":
-        measured_q = np.deg2rad(measured_q)
-
-    measured_q = robot.check_joint_angles(measured_q)
-    zero_error_rad = measured_q - expected_zero_rad
+    zero_error_rad = robot.zero_pose_error(
+        final_feedback,
+        expected_zero_rad=expected_zero_rad,
+    )
     zero_error_deg = np.rad2deg(zero_error_rad)
     zero_ok = np.all(np.abs(zero_error_rad) <= tolerance_rad)
 
-    pose = robot.forward_kinematics_dict(measured_q)
+    pose = robot.fkine_dict(final_feedback.q_rad)
 
-    print("\nMeasured joint angles from ESP32:")
-    print(f"  rad: {format_array(measured_q)}")
-    print(f"  deg: {format_array(np.rad2deg(measured_q))}")
+    print("\n零位检查:")
+    print(f"  期望零位 rad: {format_array(expected_zero_rad)}")
+    print(f"  误差 deg: {format_array(zero_error_deg)}")
+    print(f"  容许误差 deg: {args.tolerance_deg:.3f}")
+    print(f"  是否到达零位: {bool(zero_ok)}")
 
-    print("\nZero pose check:")
-    print(f"  expected zero rad: {format_array(expected_zero_rad)}")
-    print(f"  error deg: {format_array(zero_error_deg)}")
-    print(f"  tolerance deg: {args.tolerance_deg:.3f}")
-    print(f"  zero ok: {bool(zero_ok)}")
-
-    print("\nEnd effector pose solved from ESP32 joint feedback:")
-    print(f"  position xyz meter: {format_array(pose['position'])}")
-    print(f"  rotation matrix:\n{format_array(pose['rotation'])}")
-    print(f"  transform matrix:\n{format_array(pose['transform'])}")
+    print("\n根据 ESP32 关节反馈计算得到的末端位姿:")
+    print(f"  位置 xyz meter: {format_array(pose['position'])}")
+    print(f"  旋转矩阵:\n{format_array(pose['rotation'])}")
+    print(f"  齐次变换矩阵:\n{format_array(pose['transform'])}")
 
     if not zero_ok:
-        raise SystemExit("Zero pose check failed.")
+        raise SystemExit("零位检查失败。")
 
-    print("\nZero pose check passed.")
+    print("\n零位检查通过。")
 
 
 if __name__ == "__main__":

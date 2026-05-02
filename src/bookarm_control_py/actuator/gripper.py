@@ -1,7 +1,7 @@
 """Gripper actuator interface.
 
-This module converts high-level gripper intent to ESP32 JSON dictionaries and,
-when a transport is attached, sends them to the firmware.
+This module converts gripper commands to ESP32 JSON dictionaries and, when a
+transport is attached, sends them to the firmware.
 """
 
 from __future__ import annotations
@@ -9,28 +9,18 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from bookarm_control_py.bookarm import GripperCommand
-from bookarm_control_py.protocol.esp32 import DEFAULT_USB_BAUDRATE, JsonSerialTransport
+from bookarm_control_py.protocol.esp32 import JsonSerialTransport
 from bookarm_control_py.protocol.id_config import CommandId
 
 
 class GripperActuator:
     """Convert gripper commands to ESP32 JSON and optionally send them."""
 
-    _ACTION_TO_COMMAND_ID = {
-        "open": CommandId.EXT_GRIPPER_OPEN,
-        "close": CommandId.EXT_GRIPPER_CLOSE,
-        "angle": CommandId.EXT_GRIPPER_DEG,
-        "feedback": CommandId.EXT_GRIPPER_FEEDBACK,
-        "torque": CommandId.EXT_GRIPPER_TORQUE,
-    }
-
     def __init__(
         self,
         *,
         port: str | None = None,
         transport: JsonSerialTransport | None = None,
-        baudrate: int = DEFAULT_USB_BAUDRATE,
         timeout: float = 1.0,
         write_timeout: float = 1.0,
         open_delay: float = 3.0,
@@ -38,14 +28,13 @@ class GripperActuator:
         if transport is None and port is not None:
             transport = JsonSerialTransport(
                 port=port,
-                baudrate=baudrate,
                 timeout=timeout,
                 write_timeout=write_timeout,
                 open_delay=open_delay,
             )
         self.transport = transport
 
-    def open_transport(self) -> "GripperActuator":
+    def open(self) -> "GripperActuator":
         if self.transport is not None:
             self.transport.open()
         return self
@@ -54,52 +43,56 @@ class GripperActuator:
         if self.transport is not None:
             self.transport.close()
 
-    def send_command(
+    def open_gripper(
         self,
-        command: GripperCommand,
         *,
+        speed: float = 100.0,
+        acceleration: float = 10.0,
+        torque: float = 1000.0,
         wait_response: bool = False,
         response_timeout: float | None = None,
     ) -> dict[str, Any] | None:
-        message = self.to_json(command)
-        return self._send_or_return(message, wait_response, response_timeout)
-
-    def open(
-        self,
-        *,
-        wait_response: bool = False,
-        response_timeout: float | None = None,
-    ) -> dict[str, Any] | None:
-        return self._send_or_return(self.build_open(), wait_response, response_timeout)
+        return self._send_or_return(
+            self.build_open(speed=speed, acceleration=acceleration, torque=torque),
+            wait_response,
+            response_timeout,
+        )
 
     def close_gripper(
         self,
         *,
+        speed: float = 100.0,
+        acceleration: float = 10.0,
+        torque: float = 1000.0,
         wait_response: bool = False,
         response_timeout: float | None = None,
     ) -> dict[str, Any] | None:
-        return self._send_or_return(self.build_close(), wait_response, response_timeout)
+        return self._send_or_return(
+            self.build_close(speed=speed, acceleration=acceleration, torque=torque),
+            wait_response,
+            response_timeout,
+        )
 
     def set_angle(
         self,
         angle_deg: float,
         *,
+        speed: float = 100.0,
+        acceleration: float = 10.0,
+        torque: float = 1000.0,
         wait_response: bool = False,
         response_timeout: float | None = None,
     ) -> dict[str, Any] | None:
         return self._send_or_return(
-            self.build_set_angle(angle_deg),
+            self.build_set_angle(
+                angle_deg,
+                speed=speed,
+                acceleration=acceleration,
+                torque=torque,
+            ),
             wait_response,
             response_timeout,
         )
-
-    def feedback(
-        self,
-        *,
-        wait_response: bool = False,
-        response_timeout: float | None = None,
-    ) -> dict[str, Any] | None:
-        return self._send_or_return(self.build_feedback(), wait_response, response_timeout)
 
     def set_torque(
         self,
@@ -114,31 +107,113 @@ class GripperActuator:
             response_timeout,
         )
 
-    def to_json(self, command: GripperCommand) -> dict[str, Any]:
-        command_id = self._ACTION_TO_COMMAND_ID[command.action]
-        message: dict[str, Any] = {"id": int(command_id)}
+    def hold_close(
+        self,
+        *,
+        speed: float = 100.0,
+        acceleration: float = 10.0,
+        torque: float = 1000.0,
+        hold: float = -200.0,
+        wait_response: bool = False,
+        response_timeout: float | None = None,
+    ) -> dict[str, Any] | None:
+        return self._send_or_return(
+            self.build_hold_close(
+                speed=speed,
+                acceleration=acceleration,
+                torque=torque,
+                hold=hold,
+            ),
+            wait_response,
+            response_timeout,
+        )
 
-        if command.action == "angle":
-            message["angle"] = self._require_value(command)
-        elif command.action == "torque":
-            message["torque"] = self._require_value(command)
+    def read_feedback(
+        self,
+        *,
+        response_timeout: float | None = None,
+    ) -> dict[str, Any]:
+        if self.transport is None:
+            raise RuntimeError("GripperActuator has no transport attached.")
+        return self.transport.request(
+            self.feedback(),
+            response_timeout=response_timeout,
+            expected_t=int(CommandId.EXT_GRIPPER_FEEDBACK_RESPONSE),
+            response_filter=self._contains_gripper_feedback,
+            response_description="external gripper feedback T=1331 target=gripper",
+        )
 
-        return message
+    def feedback(self) -> dict[str, Any]:
+        return self.build_feedback()
 
-    def build_open(self) -> dict[str, Any]:
-        return self.to_json(GripperCommand(action="open"))
+    def build_open(
+        self,
+        *,
+        speed: float = 100.0,
+        acceleration: float = 10.0,
+        torque: float = 1000.0,
+    ) -> dict[str, Any]:
+        return {
+            "T": int(CommandId.EXT_GRIPPER_OPEN),
+            "spd": float(speed),
+            "acc": float(acceleration),
+            "torque": float(torque),
+        }
 
-    def build_close(self) -> dict[str, Any]:
-        return self.to_json(GripperCommand(action="close"))
+    def build_close(
+        self,
+        *,
+        speed: float = 100.0,
+        acceleration: float = 10.0,
+        torque: float = 1000.0,
+    ) -> dict[str, Any]:
+        return {
+            "T": int(CommandId.EXT_GRIPPER_CLOSE),
+            "spd": float(speed),
+            "acc": float(acceleration),
+            "torque": float(torque),
+        }
 
-    def build_set_angle(self, angle_deg: float) -> dict[str, Any]:
-        return self.to_json(GripperCommand(action="angle", value=float(angle_deg)))
+    def build_set_angle(
+        self,
+        angle_deg: float,
+        *,
+        speed: float = 100.0,
+        acceleration: float = 10.0,
+        torque: float = 1000.0,
+    ) -> dict[str, Any]:
+        return {
+            "T": int(CommandId.EXT_GRIPPER_DEG),
+            "angle": float(angle_deg),
+            "spd": float(speed),
+            "acc": float(acceleration),
+            "torque": float(torque),
+        }
 
     def build_feedback(self) -> dict[str, Any]:
-        return self.to_json(GripperCommand(action="feedback"))
+        return {"T": int(CommandId.EXT_GRIPPER_FEEDBACK)}
 
     def build_set_torque(self, torque: float) -> dict[str, Any]:
-        return self.to_json(GripperCommand(action="torque", value=float(torque)))
+        return {
+            "T": int(CommandId.EXT_GRIPPER_TORQUE),
+            "cmd": 1 if bool(torque) else 0,
+        }
+
+    def build_hold_close(
+        self,
+        *,
+        speed: float = 100.0,
+        acceleration: float = 10.0,
+        torque: float = 1000.0,
+        hold: float = -200.0,
+    ) -> dict[str, Any]:
+        return {
+            "T": int(CommandId.EXT_GRIPPER_HOLD_CLOSE),
+            "spd": float(speed),
+            "acc": float(acceleration),
+            "torque": float(torque),
+            "hold": float(hold),
+        }
 
     def _send_or_return(
         self,
@@ -154,7 +229,5 @@ class GripperActuator:
         return dict(command)
 
     @staticmethod
-    def _require_value(command: GripperCommand) -> float:
-        if command.value is None:
-            raise ValueError(f"{command.action} command requires value")
-        return float(command.value)
+    def _contains_gripper_feedback(response: dict[str, Any]) -> bool:
+        return response.get("target") == "gripper" or "pos" in response
