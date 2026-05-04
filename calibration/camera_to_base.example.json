@@ -1,0 +1,5 @@
+{
+  "note": "示例外参，请替换为真实标定结果。表示 base_point = R_camera_to_base @ camera_point + xyz_m。",
+  "xyz_m": [0.0, 0.0, 0.0],
+  "rpy_deg": [0.0, 0.0, 0.0]
+}

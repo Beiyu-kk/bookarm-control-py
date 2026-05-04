@@ -2,7 +2,7 @@
 
 Run from the project root:
 
-    conda run -n bookarm-beiyu python scripts/bookarm_ik_demo.py
+    conda run -n bookarm-beiyu python scripts/arm/bookarm_ik_demo.py
 
 Edit TARGET_POSITION_M and INITIAL_Q_RAD below to test different IK targets.
 """

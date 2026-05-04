@@ -1,0 +1,1 @@
+python scripts/camera/view_realsense_point_cloud.py

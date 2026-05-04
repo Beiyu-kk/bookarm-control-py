@@ -2,7 +2,7 @@
 
 Run from the project root:
 
-    conda run -n bookarm-beiyu python scripts/bookarm_fk_demo.py
+    conda run -n bookarm-beiyu python scripts/arm/bookarm_fk_demo.py
 
 Edit JOINT_ANGLES_RAD below to test different arm poses.
 """

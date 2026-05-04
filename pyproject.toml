@@ -14,7 +14,10 @@ authors = [
 dependencies = [
     "numpy>=2.4.3",
     "pin >= 4.0.0",
+    "opencv-python>=4.8",
+    "open3d>=0.18",
     "pyserial>=3.5",
+    "pyrealsense2>=2.55",
 ]
 
 [project.optional-dependencies]

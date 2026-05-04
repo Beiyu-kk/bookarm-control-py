@@ -36,6 +36,8 @@ finally:
 
 ## 常用示例
 
+机械臂相关的辅助脚本统一放在 `scripts/arm/` 下；下面命令都从项目根目录运行。
+
 ```powershell
 python example/0.check_arm_connection.py --port COM8
 python example/0.check_arm_connection.py --port COM8 --skip-torque-test
@@ -46,7 +48,10 @@ python example/3.check_fk_ik.py --port COM8
 python example/4.check_ikine_best_effort.py --port COM8
 python example/5.check_gripper.py --port COM8
 python example/6.blind_grasp.py --port COM8
-python scripts/goal_pose_grasp.py --port COM8
+python scripts/arm/bookarm_fk_demo.py
+python scripts/arm/bookarm_ik_demo.py
+python scripts/arm/goal_pose_grasp.py --port COM8
+python scripts/arm/manual_teach.py --port COM8
 ```
 
 ### best-effort IK 真机测试
@@ -73,7 +78,7 @@ python example/4.check_ikine_best_effort.py --port COM8 --max-iterations 500 --t
 
 ### 固定目标位姿抓取
 
-`scripts/goal_pose_grasp.py` 用于移动到固定目标位姿并执行抓取：
+`scripts/arm/goal_pose_grasp.py` 用于移动到固定目标位姿并执行抓取：
 
 - 目标位姿在脚本 `main()` 中直接修改，`target_position` 直接给 xyz，`target_rpy_deg` 通过 `rpy_to_matrix` 转换为旋转矩阵。
 - 逆解使用 `BookArm.ikine_best_effort`。
@@ -82,15 +87,15 @@ python example/4.check_ikine_best_effort.py --port COM8 --max-iterations 500 --t
 - 返回起始构型时速度单独由 `--return-speed` 控制，默认 `20.0`；其他机械臂运动速度默认仍为 `25.0`。
 
 ```powershell
-python scripts/goal_pose_grasp.py --port COM8
+python scripts/arm/goal_pose_grasp.py --port COM8
 ```
 
 常用参数：
 
 ```powershell
-python scripts/goal_pose_grasp.py --port COM8 --speed 25 --return-speed 20
-python scripts/goal_pose_grasp.py --port COM8 --grasp-hold-wait 3 --arm-wait 5 --gripper-wait 1
-python scripts/goal_pose_grasp.py --port COM8 --no-close
+python scripts/arm/goal_pose_grasp.py --port COM8 --speed 25 --return-speed 20
+python scripts/arm/goal_pose_grasp.py --port COM8 --grasp-hold-wait 3 --arm-wait 5 --gripper-wait 1
+python scripts/arm/goal_pose_grasp.py --port COM8 --no-close
 ```
 
 ## 注意事项
