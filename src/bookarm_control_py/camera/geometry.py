@@ -48,20 +48,20 @@ class RigidTransform:
 
         支持两种格式：
 
-        1. ``{"matrix": [[...], [...], [...], [...]]}``
-        2. ``{"xyz_m": [x, y, z], "rpy_deg": [roll, pitch, yaw]}``
+        1. ``{"xyz_m": [x, y, z], "rpy_deg": [roll, pitch, yaw]}``
+        2. ``{"matrix": [[...], [...], [...], [...]]}``
+
+        如果两种格式同时存在，优先读取 ``xyz_m`` / ``rpy_deg``。
         """
 
         with Path(path).open("r", encoding="utf-8") as file:
             payload = json.load(file)
 
-        if "matrix" in payload:
-            return cls.from_matrix(np.asarray(payload["matrix"], dtype=float))
         if "xyz_m" in payload and "rpy_deg" in payload:
             return cls.from_xyz_rpy_deg(payload["xyz_m"], payload["rpy_deg"])
-        raise ValueError(
-            "标定文件必须包含 matrix，或同时包含 xyz_m 和 rpy_deg。"
-        )
+        if "matrix" in payload:
+            return cls.from_matrix(np.asarray(payload["matrix"], dtype=float))
+        raise ValueError("标定文件必须包含 xyz_m 和 rpy_deg，或包含 matrix。")
 
     @property
     def matrix(self) -> np.ndarray:

@@ -1,7 +1,5 @@
 """采集 RealSense D435 点云，在 Open3D 中选点，并驱动 BookArm 抓取。
 
-这个脚本按 `camera_arm_pick_move.py` 的方式组织流程：
-
 1. 可选：先让机械臂回到起始关节构型。
 2. 采集一帧 D435 RGB-D，并生成彩色点云。
 3. 在 Open3D 窗口中 Shift + 左键选中目标点，按 Q 或 Esc 结束选点。
@@ -24,11 +22,10 @@ pinocchio 的环境。Open3D 选点窗口打开后：
 
 默认会自动读取 `calibration/camera_to_base.json`。当前保存的外参表示：
 
-    base_point = [camera_z, -camera_x, -camera_y] - [0.02, 0.23, -0.12] m
+    base_point = [camera_z, -camera_x, -camera_y] + [-0.02, -0.15, 0.145] m
 
-这是按“相机坐标系先绕自身 x 轴逆时针 90 度，再绕自身 z 轴逆时针
-90 度，然后沿旋转后坐标系 y 正方向 23 cm、z 负方向 12 cm、x 正方向
-2 cm 到达机械臂基座原点”的坐标系变换描述换算出来的点坐标表达。
+相机位置或朝向改变后，请先更新 `calibration/camera_to_base.json` 中的
+`xyz_m` 和 `rpy_deg`。该文件里写有详细测量、修改和验证步骤。
 
 如果临时不用标定文件，而使用参考项目那种简单轴映射和偏移，可以这样运行：
 
@@ -195,11 +192,11 @@ class CameraToBaseTransform:
     @classmethod
     def from_json(cls, path: Path) -> "CameraToBaseTransform":
         payload = json.loads(path.read_text(encoding="utf-8"))
-        if "matrix" in payload:
-            return cls.from_matrix(np.asarray(payload["matrix"], dtype=float))
         if "xyz_m" in payload and "rpy_deg" in payload:
             return cls.from_xyz_rpy_deg(payload["xyz_m"], payload["rpy_deg"])
-        raise RuntimeError("标定文件必须包含 matrix，或同时包含 xyz_m 和 rpy_deg。")
+        if "matrix" in payload:
+            return cls.from_matrix(np.asarray(payload["matrix"], dtype=float))
+        raise RuntimeError("标定文件必须包含 xyz_m 和 rpy_deg，或包含 matrix。")
 
     @property
     def matrix(self) -> np.ndarray:

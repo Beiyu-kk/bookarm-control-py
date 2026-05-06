@@ -1,13 +1,25 @@
 {
-  "note": "RealSense D435 相机坐标到 BookArm 机械臂基座坐标的外参。用户描述的是坐标系变换：当前相机坐标系先绕自身 x 轴逆时针 90 度，再绕自身 z 轴逆时针 90 度，接着沿旋转后坐标系 y 正方向 23 cm、z 负方向 12 cm、x 正方向 2 cm 到达机械臂基座原点。换算点坐标时要使用该坐标系变换的逆向坐标表达：base_point = [camera_z, -camera_x, -camera_y] - [0.02, 0.23, -0.12]。",
-  "rotation_note": "点坐标转换等价轴映射为 [camera_z, -camera_x, -camera_y]。在脚本的 R = Rz(yaw) @ Ry(pitch) @ Rx(roll) 约定下，等价 rpy_deg 为 [-90, 0, -90]。",
-  "base_origin_in_rotated_camera_m": [0.02, 0.15, -0.145],
+  "description": "RealSense D435 相机坐标系到 BookArm 机械臂基座坐标系的外参。用于 scripts/camera_arm/click_point_grasp.py 中的点坐标转换。",
+  "transform_definition": "base_point_m = R_camera_to_base @ camera_point_m + xyz_m。camera_point_m 使用 RealSense 原始相机坐标系：x 向右，y 向下，z 从相机向前。base_point_m 使用 BookArm 机械臂基座坐标系，单位为米。",
+  "active_fields": "当前代码优先读取 xyz_m 和 rpy_deg；如果这两个字段不存在，才读取 matrix。因此换相机位置时优先修改 xyz_m 和 rpy_deg。",
+  "how_to_update_when_camera_moves": [
+    "1. 固定机械臂基座坐标系不变，只重新测量相机坐标系相对于基座坐标系的位置和朝向。",
+    "2. 修改 xyz_m。xyz_m 是相机原点在机械臂基座坐标系下的位置，单位米，顺序为 [x, y, z]。例如相机原点在基座 +X 方向 20 cm、+Y 方向 5 cm、+Z 方向 30 cm，则写 [0.20, 0.05, 0.30]。",
+    "3. 修改 rpy_deg。rpy_deg 是相机坐标系到基座坐标系的欧拉角，单位度，顺序为 [roll, pitch, yaw]。代码约定 R = Rz(yaw) @ Ry(pitch) @ Rx(roll)。",
+    "4. 如果使用手眼标定或其它工具直接得到 4x4 齐次矩阵，也可以只写 matrix，并删除或同步更新 xyz_m/rpy_deg。保留两种字段时，实际运行以 xyz_m/rpy_deg 为准。",
+    "5. 改完后先运行 python scripts/camera_arm/click_point_grasp.py 做干跑。选择一个已知点，检查终端打印的 base point from extrinsic xyz m 是否接近该点在机械臂基座坐标系下的真实位置。",
+    "6. 至少用两个高度或方向不同的已知点验证。若所有点都整体平移错误，优先修正 xyz_m；若不同方向误差相反或随距离放大，优先修正 rpy_deg。确认无误后再加 --execute 执行真实抓取。"
+  ],
+  "current_mount_note": "当前参数对应的点坐标轴映射约为 base_point = [camera_z, -camera_x, -camera_y] + xyz_m。",
+  "current_manual_measurement_note": "当前 rpy_deg=[-90, 0, -90] 表示相机点坐标映射到基座坐标时近似为 [camera_z, -camera_x, -camera_y]。当前 xyz_m=[-0.02, -0.15, 0.145] 表示相机原点在基座坐标系下的位置。",
   "xyz_m": [-0.02, -0.15, 0.145],
   "rpy_deg": [-90.0, 0.0, -90.0],
+  "matrix_reference": "下面的 matrix 是由当前 xyz_m/rpy_deg 计算出的等价参考矩阵，方便检查；实际代码优先读取 xyz_m/rpy_deg。",
   "matrix": [
     [0.0, 0.0, 1.0, -0.02],
     [-1.0, 0.0, 0.0, -0.15],
     [0.0, -1.0, 0.0, 0.145],
     [0.0, 0.0, 0.0, 1.0]
-  ]
+  ],
+  "quick_check_example": "若相机点为 [0.10, 0.02, 0.40] m，则当前外参会转换为 [0.38, -0.25, 0.125] m。计算过程：base=[camera_z, -camera_x, -camera_y]+[-0.02, -0.15, 0.145]。"
 }

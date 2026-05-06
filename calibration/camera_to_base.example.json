@@ -1,5 +1,7 @@
 {
-  "note": "示例外参，请替换为真实标定结果。表示 base_point = R_camera_to_base @ camera_point + xyz_m。",
+  "description": "示例外参，请替换为真实标定结果。",
+  "transform_definition": "base_point_m = R_camera_to_base @ camera_point_m + xyz_m。",
+  "active_fields": "代码优先读取 xyz_m 和 rpy_deg；如果只提供 matrix，也支持读取 4x4 齐次矩阵。",
   "xyz_m": [0.0, 0.0, 0.0],
   "rpy_deg": [0.0, 0.0, 0.0]
 }
